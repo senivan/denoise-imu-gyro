@@ -11,7 +11,7 @@ data_dir = './dateset/'
 # test a given network
 # address = os.path.join(base_dir, 'results/EUROC/2020_02_18_16_52_55/')
 # or test the last trained network
-# address = "last"
+address = "last"
 ################################################################################
 # Network parameters
 ################################################################################
