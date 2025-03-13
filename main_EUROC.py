@@ -7,11 +7,11 @@ import src.dataset as ds
 import numpy as np
 
 base_dir = os.path.dirname(os.path.realpath(__file__))
-data_dir = '/path/to/EUROC/dataset'
+data_dir = './dateset/'
 # test a given network
 # address = os.path.join(base_dir, 'results/EUROC/2020_02_18_16_52_55/')
 # or test the last trained network
-address = "last"
+# address = "last"
 ################################################################################
 # Network parameters
 ################################################################################
@@ -37,27 +37,20 @@ dataset_params = {
     'predata_dir': os.path.join(base_dir, 'data/EUROC'),
     # set train, val and test sequence
     'train_seqs': [
-        'MH_01_easy',
-        'MH_03_medium',
-        'MH_05_difficult',
-        'V1_02_medium',
-        'V2_01_easy',
-        'V2_03_difficult'
+        'dataset-room1_512_16',
+        'dataset-room2_512_16',
+        'dataset-room3_512_16',
+        'dataset-room5_512_16'
         ],
     'val_seqs': [
-        'MH_01_easy',
-        'MH_03_medium',
-        'MH_05_difficult',
-        'V1_02_medium',
-        'V2_01_easy',
-        'V2_03_difficult',
+        'dataset-room1_512_16',
+        'dataset-room2_512_16',
+        'dataset-room3_512_16',
+        'dataset-room5_512_16',
         ],
     'test_seqs': [
-        'MH_02_easy',
-        'MH_04_difficult',
-        'V2_02_medium',
-        'V1_03_difficult',
-        'V1_01_easy',
+        'dataset-room4_512_16',
+        'dataset-room6_512_16'
         ],
     # size of trajectory during training
     'N': 32 * 500, # should be integer * 'max_train_freq'
@@ -107,10 +100,10 @@ train_params = {
 ################################################################################
 # Train on training data set
 ################################################################################
-# learning_process = lr.GyroLearningBasedProcessing(train_params['res_dir'],
-#    train_params['tb_dir'], net_class, net_params, None,
-#    train_params['loss']['dt'])
-# learning_process.train(dataset_class, dataset_params, train_params)
+learning_process = lr.GyroLearningBasedProcessing(train_params['res_dir'],
+   train_params['tb_dir'], net_class, net_params, None,
+   train_params['loss']['dt'])
+learning_process.train(dataset_class, dataset_params, train_params)
 ################################################################################
 # Test on full data set
 ################################################################################

@@ -188,18 +188,18 @@ class EUROCDataset(BaseDataset):
 
     def read_data(self, data_dir):
         r"""Read the data from the dataset"""
-
+ 
         f = os.path.join(self.predata_dir, 'MH_01_easy.p')
-        if True and os.path.exists(f):
+        if os.path.exists(f):
             return
 
         print("Start read_data, be patient please")
         def set_path(seq):
-            path_imu = os.path.join(data_dir, seq, "mav0", "imu0", "data.csv")
-            path_gt = os.path.join(data_dir, seq, "mav0", "state_groundtruth_estimate0", "data.csv")
+            path_imu = os.path.join(data_dir, seq+".csv")
+            path_gt = os.path.join(data_dir, seq+"_gt.csv")
             return path_imu, path_gt
 
-        sequences = os.listdir(data_dir)
+        sequences = ["dataset-room1_512_16", "dataset-room2_512_16", "dataset-room3_512_16", "dataset-room4_512_16", "dataset-room5_512_16", "dataset-room6_512_16"]
         # read each sequence
         for sequence in sequences:
             print("\nSequence name: " + sequence)
