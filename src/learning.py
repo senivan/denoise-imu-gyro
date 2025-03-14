@@ -1,4 +1,3 @@
-
 import torch
 import time
 import matplotlib.pyplot as plt
@@ -144,16 +143,23 @@ class LearningBasedProcessing:
             write(epoch, loss_epoch)
             scheduler.step(epoch)
             if epoch % freq_val == 0:
-                loss = self.loop_val(dataset_val, criterion)
+                val_loss, metrics = self.loop_val(dataset_val, criterion)
                 write_time(epoch, start_time)
-                best_loss = write_val(loss, best_loss)
+
+                writer.add_scalar('loss/val', val_loss.item(), epoch)
+                writer.add_scalar('MAE/val', metrics['MAE'], epoch)
+                writer.add_scalar('RMSE/val', metrics['RMSE'], epoch)
+                writer.add_scalar('STD_Error/val', metrics['STD'], epoch)
+                writer.add_scalar('MAX_Error/val', metrics['MaxError'], epoch)
+
+                best_loss = write_val(val_loss, best_loss)
                 start_time = time.time()
         # training is over !
 
         # test on new data
         dataset_test = dataset_class(**dataset_params, mode='test')
         self.load_weights()
-        test_loss = self.loop_val(dataset_test, criterion)
+        test_loss, test_metrics = self.loop_val(dataset_test, criterion)
         dict_loss = {
             'final_loss/val': best_loss.item(),
             'final_loss/test': test_loss.item()
@@ -175,19 +181,68 @@ class LearningBasedProcessing:
         optimizer.step()
         return loss_epoch
 
+#    def loop_val(self, dataset, criterion):
+#        """Forward loop over validation data"""
+#        loss_epoch = 0
+#        all_preds = []
+#        all_targets = []
+#        self.net.eval()
+#        with torch.no_grad():
+#            for i in range(len(dataset)):
+#                us, xs = dataset[i]
+#                hat_xs = self.net(us.cuda().unsqueeze(0))
+#                loss = criterion(xs.cuda().unsqueeze(0), hat_xs)/len(dataset)
+#                loss_epoch += loss.cpu()
+#                all_preds.append(hat_xs.cpu())
+#                all_targets.append(xs.cpu())
+#        self.net.train()
+#        all_preds = torch.cat(all_preds, dim=0)
+#        all_targets = torch.cat(all_targets, dim=0)
+#        error = all_targets - all_preds
+#        mae = torch.mean(torch.abs(error))
+#        rmse = torch.sqrt(torch.mean(error ** 2))
+#        std_error = torch.std(error)
+#        max_error = torch.max(torch.abs(error))
+#        metrics = {
+#            'MAE': mae.item(),
+#            'RMSE': rmse.item(),
+#            'STD': std_error.item(),
+#            'MaxError': max_error.item()
+#        }
+#        return loss_epoch, metrics
     def loop_val(self, dataset, criterion):
-        """Forward loop over validation data"""
+        """Forward loop over validation data and compute additional metrics."""
         loss_epoch = 0
+        all_errors = []  # list to accumulate flattened error vectors for each sample
         self.net.eval()
         with torch.no_grad():
-            for i in range(len(dataset)):
+           for i in range(len(dataset)):
                 us, xs = dataset[i]
-                hat_xs = self.net(us.cuda().unsqueeze(0))
-                loss = criterion(xs.cuda().unsqueeze(0), hat_xs)/len(dataset)
+                # Add a batch dimension and move to GPU
+                us = us.cuda().unsqueeze(0)
+                xs = xs.cuda().unsqueeze(0)
+                hat_xs = self.net(us)
+                loss = criterion(xs, hat_xs) / len(dataset)
                 loss_epoch += loss.cpu()
+                # Compute error for this sample, then flatten
+                error_sample = xs - hat_xs  # shape: [1, T, d]
+                all_errors.append(error_sample.squeeze(0).view(-1))
         self.net.train()
-        return loss_epoch
-
+        # Concatenate all errors into one 1D tensor
+        all_errors = torch.cat(all_errors, dim=0)
+        # Compute metrics over all elements
+        mae = torch.mean(torch.abs(all_errors))
+        rmse = torch.sqrt(torch.mean(all_errors ** 2))
+        std_error = torch.std(all_errors)
+        max_error = torch.max(torch.abs(all_errors))
+        metrics = {
+            'MAE': mae.item(),
+            'RMSE': rmse.item(),
+            'STD': std_error.item(),
+            'MaxError': max_error.item()
+        }
+        return loss_epoch, metrics
+    
     def save_net(self):
         """save the weights on the net in CPU"""
         self.net.eval().cpu()

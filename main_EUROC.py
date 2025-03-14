@@ -89,9 +89,9 @@ train_params = {
         'shuffle': False,
     },
     # frequency of validation step
-    'freq_val': 600,
+    'freq_val': 200,
     # total number of epochs
-    'n_epochs': 1800,
+    'n_epochs': 2500,
     # where record results ?
     'res_dir': os.path.join(base_dir, "results/EUROC"),
     # where record Tensorboard log ?
