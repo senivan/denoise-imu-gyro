@@ -66,8 +66,7 @@ train_params = {
         'weight_decay': 1e-1,
         'amsgrad': False,
     },
-    # TODO: update loss class, to use aoe and roe in loss computation
-    'loss_class': sl.GyroLoss,
+    'loss_class': sl.LossImprovedAOE_ROE,
     'loss': {
         'min_N': int(np.log2(dataset_params['min_train_freq'])),
         'max_N': int(np.log2(dataset_params['max_train_freq'])),
@@ -89,9 +88,9 @@ train_params = {
         'shuffle': False,
     },
     # frequency of validation step
-    'freq_val': 200,
+    'freq_val': 300,
     # total number of epochs
-    'n_epochs': 2000,
+    'n_epochs': 1800,
     # where record results ?
     'res_dir': os.path.join(base_dir, "results/EUROC"),
     # where record Tensorboard log ?
