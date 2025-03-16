@@ -217,6 +217,9 @@ class LearningBasedProcessing:
         all_errors = []  # list to accumulate flattened error vectors for each sample
         aoe_list = []
         roe_list = []
+        aoe_total = 0.0
+        loss_val = 0.0
+        roe_total = 0.0
         self.net.eval()
         with torch.no_grad():
            for i in range(len(dataset)):
