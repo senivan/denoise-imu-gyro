@@ -16,7 +16,7 @@ from src.utils import pload, pdump, yload, ydump, mkdir, bmv
 from src.utils import bmtm, bmtv, bmmt
 from datetime import datetime
 from src.lie_algebra import SO3, CPUSO3
-
+from src.metrics import compute_aoe, compute_roe
 
 class LearningBasedProcessing:
     def __init__(self, res_dir, tb_dir, net_class, net_params, address, dt):
@@ -214,6 +214,8 @@ class LearningBasedProcessing:
         """Forward loop over validation data and compute additional metrics."""
         loss_epoch = 0
         all_errors = []  # list to accumulate flattened error vectors for each sample
+        aoe_list = []
+        roe_list = []
         self.net.eval()
         with torch.no_grad():
            for i in range(len(dataset)):
@@ -227,6 +229,19 @@ class LearningBasedProcessing:
                 # Compute error for this sample, then flatten
                 error_sample = xs - hat_xs  # shape: [1, T, d]
                 all_errors.append(error_sample.squeeze(0).view(-1))
+                r_gt = xs[0]
+                r_est = hat_xs[0]
+                if r_est.dim() == 2 and r_est.shape[1] == 3:
+                    R_est = SO3.exp(r_est)
+                else:
+                    R_est = r_est
+                aoe = compute_aoe(r_gt, R_est)
+                roe = compute_roe(r_gt, R_est)
+                aoe_list.append(aoe)
+                roe_list.append(roe)
+        mean_aoe = torch.stack(aoe_list).mean()
+
+
         self.net.train()
         # Concatenate all errors into one 1D tensor
         all_errors = torch.cat(all_errors, dim=0)
@@ -239,7 +254,9 @@ class LearningBasedProcessing:
             'MAE': mae.item(),
             'RMSE': rmse.item(),
             'STD': std_error.item(),
-            'MaxError': max_error.item()
+            'MaxError': max_error.item(),
+            'AOE': mean_aoe.item(),
+            'ROE': mean_roe.item()
         }
         return loss_epoch, metrics
     
