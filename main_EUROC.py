@@ -38,17 +38,16 @@ dataset_params = {
     # set train, val and test sequence
     'train_seqs': [
         'dataset-room1_512_16',
-        'dataset-room2_512_16',
         'dataset-room3_512_16',
         'dataset-room5_512_16'
         ],
     'val_seqs': [
-        'dataset-room1_512_16',
         'dataset-room2_512_16',
-        'dataset-room3_512_16',
-        'dataset-room5_512_16',
+        'dataset-room4_512_16',
+        'dataset-room6_512_16',
         ],
     'test_seqs': [
+        'dataset-room2_512_16',
         'dataset-room4_512_16',
         'dataset-room6_512_16'
         ],

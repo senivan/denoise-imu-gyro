@@ -151,7 +151,8 @@ class LearningBasedProcessing:
                 writer.add_scalar('RMSE/val', metrics['RMSE'], epoch)
                 writer.add_scalar('STD_Error/val', metrics['STD'], epoch)
                 writer.add_scalar('MAX_Error/val', metrics['MaxError'], epoch)
-
+                writer.add_scalar('AOE/val', metrics['AOE'], epoch)
+                writer.add_scalar('ROE/val', metrics['ROE'], epoch)
                 best_loss = write_val(val_loss, best_loss)
                 start_time = time.time()
         # training is over !
@@ -240,7 +241,7 @@ class LearningBasedProcessing:
                 aoe_list.append(aoe)
                 roe_list.append(roe)
         mean_aoe = torch.stack(aoe_list).mean()
-
+        mean_roe = torch.stack(roe_list).mean()
 
         self.net.train()
         # Concatenate all errors into one 1D tensor

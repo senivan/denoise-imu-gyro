@@ -19,16 +19,22 @@ def compute_alignment(R_gt, R_est):
     return R_est_aligned
 
 def compute_aoe(R_gt, R_est):
+    if R_est.dim() == 2 and R_est.shape[1] == 3:
+        R_est = SO3.exp(R_est)
+    if R_gt.dim() == 2 and R_gt.shape[1] == 3:
+        R_gt = SO3.exp(R_gt)
     M = R_gt.shape[0]
     R_est_aligned = compute_alignment(R_gt, R_est)
     error_sum = 0.0
     for n in range(M):
         R_diff = torch.matmul(R_gt[n].transpose(0, 1), R_est_aligned[n])
-        log_R = SO3.log(R_diff)
-        error_sim += torch.norm(log_R) ** 2
+        log_R = SO3.log(R_diff.unsqueeze(0)).squeeze(0)
+        error_sum += torch.norm(log_R) ** 2
     return torch.sqrt(error_sum / M)
 
 def cumulative_distance(positions):
+    if isinstance(positions, torch.Tensor):
+        positions = positions.cpu().numpy()
     dists = np.linalg.norm(np.diff(positions, axis=0), axis = 1)
     return np.concatenate(([0], np.cumsum(dists)))
 
@@ -45,13 +51,20 @@ def find_disp(positions, bar):
     return indices
 
 def compute_roe(R_gt, R_est):
+    if R_est.dim() == 2 and R_est.shape[1] == 3:
+        R_est = SO3.exp(R_est)
+    if R_gt.dim() == 2 and R_gt.shape[1] == 3:
+        R_gt = SO3.exp(R_gt)
+    M = R_gt.shape[0]
     disp_pairs = find_disp(R_gt, 7)
     errors = []
     for (n, g) in disp_pairs:
+        if n >= M or g >= M:
+            continue
         delta_r_gt  = torch.matmul(R_gt[n].transpose(0, 1), R_gt[g])
         delta_r_est = delta_R_est = torch.matmul(R_est[n].transpose(0, 1), R_est[g])
-        R_diff = torch.matmul(delta_R_gt, torch.inverse(delta_R_est))
-        log_R = SO3.log(R_diff)
+        R_diff = torch.matmul(delta_r_gt, torch.inverse(delta_r_est))
+        log_R = SO3.log(R_diff.unsqueeze(0)).squeeze(0)
         errors.append(torch.norm(log_R))
     errors_tensor = torch.stack(errors)
     median = torch.median(errors_tensor)
