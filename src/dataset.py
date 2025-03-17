@@ -187,8 +187,8 @@ class EUROCDataset(BaseDataset):
         self.read_data(data_dir)
 
     def read_data(self, data_dir):
-        r"""Read the data from the dataset"""
- 
+        """Read the data from the dataset"""
+
         f = os.path.join(self.predata_dir, 'MH_01_easy.p')
         if os.path.exists(f):
             return
@@ -283,13 +283,13 @@ class TUMVIDataset(BaseDataset):
         r"""Read the data from the dataset"""
 
         f = os.path.join(self.predata_dir, 'dataset-room1_512_16_gt.p')
-        if True and os.path.exists(f):
+        if os.path.exists(f):
             return
 
         print("Start read_data, be patient please")
         def set_path(seq):
             path_imu = os.path.join(data_dir, seq, "mav0", "imu0", "data.csv")
-            path_gt = os.path.join(data_dir, seq, "mav0", "mocap0", "data.csv")
+            path_gt = os.path.join(data_dir, seq, "mav0", "cam1", "data.csv")
             return path_imu, path_gt
 
         sequences = os.listdir(data_dir)
@@ -297,8 +297,113 @@ class TUMVIDataset(BaseDataset):
         # read each sequence
         for sequence in sequences:
             print("\nSequence name: " + sequence)
-            if 'room' not in sequence:
-                continue
+           # if 'room' not in sequence:
+           #     continue
+
+            path_imu, path_gt = set_path(sequence)
+            imu = np.genfromtxt(path_imu, delimiter=",", skip_header=1)
+            gt = np.genfromtxt(path_gt, delimiter=",", skip_header=1)
+
+            # time synchronization between IMU and ground truth
+            t0 = np.max([gt[0, 0], imu[0, 0]])
+            t_end = np.min([gt[-1, 0], imu[-1, 0]])
+
+            # start index
+            idx0_imu = np.searchsorted(imu[:, 0], t0)
+            idx0_gt = np.searchsorted(gt[:, 0], t0)
+
+            # end index
+            idx_end_imu = np.searchsorted(imu[:, 0], t_end, 'right')
+            idx_end_gt = np.searchsorted(gt[:, 0], t_end, 'right')
+
+            # subsample
+            imu = imu[idx0_imu: idx_end_imu]
+            gt = gt[idx0_gt: idx_end_gt]
+            ts = imu[:, 0]/1e9
+
+            # interpolate
+            t_gt = gt[:, 0]/1e9
+            gt = self.interpolate(gt, t_gt, ts)
+
+            # take ground truth position
+            p_gt = gt[:, 1:4]
+            p_gt = p_gt - p_gt[0]
+
+            # take ground true quaternion pose
+            q_gt = SO3.qnorm(torch.Tensor(gt[:, 4:8]).double())
+            Rot_gt = SO3.from_quaternion(q_gt.cuda(), ordering='wxyz').cpu()
+
+            # convert from numpy
+            p_gt = torch.Tensor(p_gt).double()
+            v_gt = torch.zeros_like(p_gt).double()
+            v_gt[1:] = (p_gt[1:]-p_gt[:-1])/self.dt
+            imu = torch.Tensor(imu[:, 1:]).double()
+
+            # compute pre-integration factors for all training
+            mtf = self.min_train_freq
+            dRot_ij = bmtm(Rot_gt[:-mtf], Rot_gt[mtf:])
+            dRot_ij = SO3.dnormalize(dRot_ij.cuda())
+            dxi_ij = SO3.log(dRot_ij).cpu()
+
+            # masks with 1 when ground truth is available, 0 otherwise
+            masks = dxi_ij.new_ones(dxi_ij.shape[0])
+            tmp = np.searchsorted(t_gt, ts[:-mtf])
+            diff_t = ts[:-mtf] - t_gt[tmp]
+            masks[np.abs(diff_t) > 0.01] = 0
+
+            # save all the sequence
+            mondict = {
+                'xs': torch.cat((dxi_ij, masks.unsqueeze(1)), 1).float(),
+                'us': imu.float(),
+            }
+            pdump(mondict, self.predata_dir, sequence + ".p")
+
+            # save ground truth
+            mondict = {
+                'ts': ts,
+                'qs': q_gt.float(),
+                'vs': v_gt.float(),
+                'ps': p_gt.float(),
+            }
+            pdump(mondict, self.predata_dir, sequence + "_gt.p")
+
+
+class EUROCNewDataset(BaseDataset):
+    """
+        Dataloader for the TUM-VI Data Set.
+    """
+
+    def __init__(self, data_dir, predata_dir, train_seqs, val_seqs,
+                test_seqs, mode, N, min_train_freq, max_train_freq, dt=0.005):
+        super().__init__(predata_dir, train_seqs, val_seqs, test_seqs, mode, N,
+            min_train_freq, max_train_freq, dt)
+        # convert raw data to pre loaded data
+        self.read_data(data_dir)
+        # noise density
+        self.imu_std = torch.Tensor([8e-5, 1e-3]).float()
+        # bias repeatability (without in-run bias stability)
+        self.imu_b0 = torch.Tensor([1e-3, 1e-3]).float()
+
+    def read_data(self, data_dir):
+        r"""Read the data from the dataset"""
+
+        f = os.path.join(self.predata_dir, 'dataset-room1_512_16_gt.p')
+        if os.path.exists(f) and False:
+            return
+
+        print("Start read_data, be patient please")
+        def set_path(seq):
+            path_imu = os.path.join(data_dir, seq, "imu.csv")
+            path_gt = os.path.join(data_dir, seq, "gt.csv")
+            return path_imu, path_gt
+
+        sequences = os.listdir(data_dir)
+
+        # read each sequence
+        for sequence in sequences:
+            print("\nSequence name: " + sequence)
+           # if 'room' not in sequence:
+           #     continue
 
             path_imu, path_gt = set_path(sequence)
             imu = np.genfromtxt(path_imu, delimiter=",", skip_header=1)

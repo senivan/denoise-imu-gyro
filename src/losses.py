@@ -88,7 +88,8 @@ class GyroLoss(BaseLoss):
     def forward_with_rotation_matrices_mask(self, xs, hat_xs):
         """Forward errors with rotation matrices"""
         N = xs.shape[0]
-        masks = xs[:, :, 3].unsqueeze(1)
+        masks = xs[:, :, 2].unsqueeze(1)
+        # print("Masks: ", masks)
         masks = torch.nn.functional.conv1d(masks, self.weight, bias=None,
             stride=self.min_train_freq).double().transpose(1, 2)
         masks[masks < 1] = 0
@@ -139,6 +140,31 @@ class GyroLoss(BaseLoss):
         return loss
 
 
+def quat_to_rot(q):
+    """
+    Converts a batch of quaternions in [x, y, z, w] format (shape: [B, 4])
+    to rotation matrices of shape [B, 3, 3].
+    """
+    # Normalize the quaternion to ensure unit norm
+    q = q / q.norm(dim=-1, keepdim=True)
+    x, y, z, w = q.unbind(-1)
+    # Compute each element of the rotation matrix
+    m00 = 1 - 2*(y**2 + z**2)
+    m01 = 2*(x*y - z*w)
+    m02 = 2*(x*z + y*w)
+    m10 = 2*(x*y + z*w)
+    m11 = 1 - 2*(x**2 + z**2)
+    m12 = 2*(y*z - x*w)
+    m20 = 2*(x*z - y*w)
+    m21 = 2*(y*z + x*w)
+    m22 = 1 - 2*(x**2 + y**2)
+    rot = torch.stack([
+        torch.stack([m00, m01, m02], dim=-1),
+        torch.stack([m10, m11, m12], dim=-1),
+        torch.stack([m20, m21, m22], dim=-1)
+    ], dim=-2)
+    return rot
+
 class LossImprovedAOE_ROE(BaseLoss):
     """Loss calculation with integrated AOE/ROE terms."""
     def __init__(self, w, min_N, max_N, dt, target, huber, lambda_aoe=0.2, lambda_huber=0.1):
@@ -171,15 +197,20 @@ class LossImprovedAOE_ROE(BaseLoss):
         Both predicted and true are assumed to be tensors of shape (M, 3, 3).
         Returns the mean squared angular error.
         """
-        # Compute relative rotation: R_rel = predicted^T * true
+        if true.dim() == 2 and true.shape[1] == 4:
+            true = quat_to_rot(true)
+        if predicted.dim() == 2 and predicted.shape[1] == 4:
+            predicted = quat_to_rot(predicted)
+        if predicted.shape[0] != true.shape[0]:
+            B = min(predicted.shape[0], true.shape[0])
+            predicted = predicted[:B]
+            true = true[:B]
+            print(f"Warning: Batch size mismatch detected. Cropping to batch size {B}.")
+
         relative_rotation = torch.bmm(predicted.transpose(1, 2), true)
-        # Calculate the trace of each relative rotation matrix
         trace = torch.diagonal(relative_rotation, dim1=-2, dim2=-1).sum(-1)
-        # Compute cosine of the rotation angle
         cos_angle = (trace - 1) / 2
-        # Clamp for numerical stability and compute angle in radians
         angle = torch.acos(torch.clamp(cos_angle, -1.0, 1.0))
-        # Return mean squared error (squared angle)
         return torch.mean(angle ** 2)
 
     def forward_with_rotation_matrices(self, xs, hat_xs):
