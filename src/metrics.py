@@ -9,9 +9,23 @@ def compute_alignment(R_gt, R_est):
     if isinstance(R_gt, list):
         R_gt = torch.stack(R_gt, dim=0)
     
-    # Debug: ensure dimensions are correct
+    # If the tensors are in quaternion format (M, 4), convert them
+    if R_gt.dim() == 2 and R_gt.shape[1] == 4:
+        R_gt = SO3.from_quaternion(R_gt)
+    if R_est.dim() == 2 and R_est.shape[1] == 4:
+        R_est = SO3.from_quaternion(R_est)
+    
+    # If the tensors are still 2D (but with 3 channels), convert from Lie algebra to rotation matrices
+    if R_gt.dim() == 2 and R_gt.shape[1] == 3:
+        R_gt = SO3.exp(R_gt)
+    if R_est.dim() == 2 and R_est.shape[1] == 3:
+        R_est = SO3.exp(R_est)
+    
+    # At this point, we expect R_gt and R_est to be (M, 3, 3)
     if R_est.dim() != 3 or R_est.shape[1:] != (3, 3):
         raise ValueError("R_est must be of shape (M,3,3), got {}".format(R_est.shape))
+    if R_gt.dim() != 3 or R_gt.shape[1:] != (3, 3):
+        raise ValueError("R_gt must be of shape (M,3,3), got {}".format(R_gt.shape))
     
     R_est0_inv = torch.inverse(R_est[0])
     alignment = torch.matmul(R_gt[0], R_est0_inv)
@@ -19,10 +33,24 @@ def compute_alignment(R_gt, R_est):
     return R_est_aligned
 
 def compute_aoe(R_gt, R_est):
+    # Convert R_est to rotation matrices if in lie algebra (axis-angle: shape (M, 3)) or quaternion (shape (M, 4))
     if R_est.dim() == 2 and R_est.shape[1] == 3:
         R_est = SO3.exp(R_est)
+    elif R_est.dim() == 2 and R_est.shape[1] == 4:
+        R_est = SO3.from_quaternion(R_est)
+    
+    # Convert R_gt similarly
     if R_gt.dim() == 2 and R_gt.shape[1] == 3:
         R_gt = SO3.exp(R_gt)
+    elif R_gt.dim() == 2 and R_gt.shape[1] == 4:
+        R_gt = SO3.from_quaternion(R_gt)
+    
+    # Ensure shapes are (M, 3, 3)
+    if R_gt.dim() != 3 or R_gt.shape[1:] != (3, 3):
+        raise ValueError("R_gt must be of shape (M,3,3), got {}".format(R_gt.shape))
+    if R_est.dim() != 3 or R_est.shape[1:] != (3, 3):
+        raise ValueError("R_est must be of shape (M,3,3), got {}".format(R_est.shape))
+    
     M = R_gt.shape[0]
     R_est_aligned = compute_alignment(R_gt, R_est)
     error_sum = 0.0
@@ -35,7 +63,7 @@ def compute_aoe(R_gt, R_est):
 def cumulative_distance(positions):
     if isinstance(positions, torch.Tensor):
         positions = positions.cpu().numpy()
-    dists = np.linalg.norm(np.diff(positions, axis=0), axis = 1)
+    dists = np.linalg.norm(np.diff(positions, axis=0), axis=1)
     return np.concatenate(([0], np.cumsum(dists)))
 
 def find_disp(positions, bar):
@@ -53,8 +81,19 @@ def find_disp(positions, bar):
 def compute_roe(R_gt, R_est):
     if R_est.dim() == 2 and R_est.shape[1] == 3:
         R_est = SO3.exp(R_est)
+    elif R_est.dim() == 2 and R_est.shape[1] == 4:
+        R_est = SO3.from_quaternion(R_est)
+    
     if R_gt.dim() == 2 and R_gt.shape[1] == 3:
         R_gt = SO3.exp(R_gt)
+    elif R_gt.dim() == 2 and R_gt.shape[1] == 4:
+        R_gt = SO3.from_quaternion(R_gt)
+    
+    if R_gt.dim() != 3 or R_gt.shape[1:] != (3, 3):
+        raise ValueError("R_gt must be of shape (M, 3, 3), got {}".format(R_gt.shape))
+    if R_est.dim() != 3 or R_est.shape[1:] != (3, 3):
+        raise ValueError("R_est must be of shape (M, 3, 3), got {}".format(R_est.shape))
+    
     M = R_gt.shape[0]
     disp_pairs = find_disp(R_gt, 7)
     errors = []
@@ -62,10 +101,12 @@ def compute_roe(R_gt, R_est):
         if n >= M or g >= M:
             continue
         delta_r_gt  = torch.matmul(R_gt[n].transpose(0, 1), R_gt[g])
-        delta_r_est = delta_R_est = torch.matmul(R_est[n].transpose(0, 1), R_est[g])
+        delta_r_est = torch.matmul(R_est[n].transpose(0, 1), R_est[g])
         R_diff = torch.matmul(delta_r_gt, torch.inverse(delta_r_est))
         log_R = SO3.log(R_diff.unsqueeze(0)).squeeze(0)
         errors.append(torch.norm(log_R))
+    if len(errors) == 0:
+        return torch.tensor(0.0)
     errors_tensor = torch.stack(errors)
     median = torch.median(errors_tensor)
     return median

@@ -48,7 +48,8 @@ class GyroLoss(BaseLoss):
     def forward_with_rotation_matrices(self, xs, hat_xs):
         """Forward errors with rotation matrices"""
         N = xs.shape[0]
-        Xs = SO3.exp(xs[:, ::self.min_train_freq].reshape(-1, 3).double())
+        # Xs = SO3.exp(xs[:, ::self.min_train_freq].reshape(-1, 3).double())
+        Xs = SO3.exp(xs[:, ::self.min_train_freq, :3].reshape(-1, 3).double())
         hat_xs = self.dt*hat_xs.reshape(-1, 3).double()
         Omegas = SO3.exp(hat_xs[:, :3])
         # compute increment at min_train_freq by decimation
@@ -166,13 +167,15 @@ def quat_to_rot(q):
     return rot
 
 class LossImprovedAOE_ROE(BaseLoss):
-    """Loss calculation with integrated AOE/ROE terms."""
-    def __init__(self, w, min_N, max_N, dt, target, huber, lambda_aoe=0.2, lambda_huber=0.1):
+    """Loss calculation with integrated AOE/ROE terms.
+       This loss converts ground truth rotations from quaternion form to rotation matrices if needed.
+    """
+    def __init__(self, w, min_N, max_N, dt, target, huber, lambda_aoe=0.1, lambda_huber=0.1):
         super().__init__(min_N, max_N, dt)
         self.w = w
         self.sl = torch.nn.SmoothL1Loss()
         self.lambda_aoe = lambda_aoe    # Weight for the direct orientation error (AOE/ROE)
-        self.lambda_huber = lambda_huber  # Weight for the decimation/huber terms
+        self.lambda_huber = lambda_huber  # Weight for the decimation (SmoothL1) terms
         if target == 'rotation matrix':
             self.forward = self.forward_with_rotation_matrices
         elif target == 'quaternion':
@@ -182,31 +185,33 @@ class LossImprovedAOE_ROE(BaseLoss):
         elif target == 'quaternion mask':
             self.forward = self.forward_with_quaternion_mask
         self.huber = huber
-        # Weight for computing convolutional masks
         self.weight = torch.ones(1, 1, self.min_train_freq).cuda() / self.min_train_freq
         self.N0 = 5  # Remove first N0 increments due to padding
 
     def f_huber(self, rs):
-        """Compute the Huber (SmoothL1) loss term."""
         loss = self.w * self.sl(rs / self.huber, torch.zeros_like(rs)) * (self.huber ** 2)
         return loss
 
     def compute_aoe_roe(self, predicted, true):
         """
-        Compute the orientation error between predicted and true rotations.
-        Both predicted and true are assumed to be tensors of shape (M, 3, 3).
-        Returns the mean squared angular error.
+        Compute the mean squared angular error between predicted and true rotations.
+        If either tensor has a last dimension of 4, it is assumed to be in quaternion form
+        and is converted to a rotation matrix using SO3.from_quaternion with ordering 'wxyz'.
+        After conversion, both tensors should have shape (M, 3, 3).
         """
-        if true.dim() == 2 and true.shape[1] == 4:
-            true = quat_to_rot(true)
+        # If predicted is in quaternion form (shape [M,4]), convert it.
         if predicted.dim() == 2 and predicted.shape[1] == 4:
-            predicted = quat_to_rot(predicted)
-        if predicted.shape[0] != true.shape[0]:
-            B = min(predicted.shape[0], true.shape[0])
-            predicted = predicted[:B]
-            true = true[:B]
-            print(f"Warning: Batch size mismatch detected. Cropping to batch size {B}.")
-
+            predicted = SO3.from_quaternion(predicted, ordering='wxyz')
+        # If true is in quaternion form (shape [M,4]), convert it.
+        if true.dim() == 2 and true.shape[1] == 4:
+            true = SO3.from_quaternion(true, ordering='wxyz')
+        # If the inputs already have a batch dimension but with quaternions (e.g., [B, T, 4]),
+        # you might need to reshape them. Here we assume inputs to this function are 2D tensors.
+        # Crop both tensors to the minimum length in case they differ.
+        min_len = min(predicted.shape[0], true.shape[0])
+        predicted = predicted[:min_len]
+        true = true[:min_len]
+        # Now both tensors should have shape (M, 3, 3)
         relative_rotation = torch.bmm(predicted.transpose(1, 2), true)
         trace = torch.diagonal(relative_rotation, dim1=-2, dim2=-1).sum(-1)
         cos_angle = (trace - 1) / 2
@@ -215,29 +220,39 @@ class LossImprovedAOE_ROE(BaseLoss):
 
     def forward_with_rotation_matrices(self, xs, hat_xs):
         """
-        Forward method when using rotation matrices.
-        xs: ground truth increments (tensor of shape (N_samples, 3) or convertible to rotation matrices)
-        hat_xs: network output (tensor of shape (N_samples, 3))
+        Forward method for rotation matrices and integrated AOE/ROE.
+        xs: ground truth increments (tensor of shape (N, T, 4)); only the first 3 channels are used.
+        hat_xs: network output (tensor of shape (N, T, 3))
         """
         N = xs.shape[0]
-        # Convert the ground truth increments to rotation matrices.
-        Xs = SO3.exp(xs[:, ::self.min_train_freq].reshape(-1, 3).double())
-        # Scale network output by dt and reshape.
+        # Use only the first 3 channels from xs
+        Xs = SO3.exp(xs[:, ::self.min_train_freq, :3].reshape(-1, 3).double())
         hat_xs = self.dt * hat_xs.reshape(-1, 3).double()
-        # Convert network output to rotation matrices.
         Omegas = SO3.exp(hat_xs[:, :3])
-        # Decimation: compute increment at min_train_freq.
+        
+        # Decimation loop for min_N steps
         for k in range(self.min_N):
+            if Omegas.size(0) % 2 == 1:
+                Omegas = Omegas[:-1]
             Omegas = Omegas[::2].bmm(Omegas[1::2])
+        
         predicted_rotations = Omegas
         true_rotations = Xs
-        # Compute the direct orientation error (AOE/ROE) term.
         aoe_error = self.compute_aoe_roe(predicted_rotations, true_rotations)
         total_loss = self.lambda_aoe * aoe_error
-        # Compute additional loss terms by further decimating over scales.
+        
+        # Further decimation from min_N to max_N
         for k in range(self.min_N, self.max_N):
+            if Omegas.size(0) % 2 == 1:
+                Omegas = Omegas[:-1]
+            if Xs.size(0) % 2 == 1:
+                Xs = Xs[:-1]
             Omegas = Omegas[::2].bmm(Omegas[1::2])
             Xs = Xs[::2].bmm(Xs[1::2])
+            # Crop to minimum length to ensure matching dimensions
+            min_length = min(Omegas.size(0), Xs.size(0))
+            Omegas = Omegas[:min_length]
+            Xs = Xs[:min_length]
             rs = SO3.log(bmtm(Omegas, Xs)).reshape(N, -1, 3)[:, self.N0:]
             huber_term = self.f_huber(rs) / (2 ** (k - self.min_N + 1))
             total_loss += self.lambda_huber * huber_term
@@ -245,23 +260,32 @@ class LossImprovedAOE_ROE(BaseLoss):
 
     def forward_with_quaternions(self, xs, hat_xs):
         """
-        Forward method when using quaternions.
-        xs: ground truth increments (tensor of shape (N_samples, 3) in rotation vector form)
-        hat_xs: network output (tensor of shape (N_samples, 3))
+        Forward method for quaternions and integrated AOE/ROE.
+        xs: ground truth increments (tensor of shape (N, T, 4)); use only the first 3 channels.
+        hat_xs: network output (tensor of shape (N, T, 3))
         """
         N = xs.shape[0]
-        Xs = SO3.qexp(xs[:, ::self.min_train_freq].reshape(-1, 3).double())
+        Xs = SO3.qexp(xs[:, ::self.min_train_freq, :3].reshape(-1, 3).double())
         hat_xs = self.dt * hat_xs.reshape(-1, 3).double()
         Omegas = SO3.qexp(hat_xs[:, :3])
         for k in range(self.min_N):
+            if Omegas.size(0) % 2 == 1:
+                Omegas = Omegas[:-1]
             Omegas = SO3.qmul(Omegas[::2], Omegas[1::2])
         predicted_rotations = Omegas
         true_rotations = Xs
         aoe_error = self.compute_aoe_roe(predicted_rotations, true_rotations)
         total_loss = self.lambda_aoe * aoe_error
         for k in range(self.min_N, self.max_N):
+            if Omegas.size(0) % 2 == 1:
+                Omegas = Omegas[:-1]
+            if Xs.size(0) % 2 == 1:
+                Xs = Xs[:-1]
             Omegas = SO3.qmul(Omegas[::2], Omegas[1::2])
             Xs = SO3.qmul(Xs[::2], Xs[1::2])
+            min_length = min(Omegas.size(0), Xs.size(0))
+            Omegas = Omegas[:min_length]
+            Xs = Xs[:min_length]
             rs = SO3.qlog(SO3.qmul(SO3.qinv(Omegas), Xs))
             rs = rs.view(N, -1, 3)[:, self.N0:]
             huber_term = self.f_huber(rs) / (2 ** (k - self.min_N + 1))
@@ -270,12 +294,15 @@ class LossImprovedAOE_ROE(BaseLoss):
 
     def forward_with_rotation_matrices_mask(self, xs, hat_xs):
         """
-        Forward method for rotation matrices with an additional mask.
-        xs: ground truth increments with mask information (last channel holds mask)
-        hat_xs: network output
+        Forward method for rotation matrices with mask and integrated AOE/ROE.
+        xs: ground truth increments with mask (tensor of shape (N, T, 4)); if no mask is present, a dummy mask is used.
+        hat_xs: network output (tensor of shape (N, T, 3))
         """
         N = xs.shape[0]
-        masks = xs[:, :, 3].unsqueeze(1)
+        if xs.shape[2] < 4:
+            masks = torch.ones(xs.shape[0], xs.shape[1], 1, device=xs.device)
+        else:
+            masks = xs[:, :, 3].unsqueeze(1)
         masks = torch.nn.functional.conv1d(masks, self.weight, bias=None,
                                             stride=self.min_train_freq).double().transpose(1, 2)
         masks[masks < 1] = 0
@@ -283,15 +310,26 @@ class LossImprovedAOE_ROE(BaseLoss):
         hat_xs = self.dt * hat_xs.reshape(-1, 3).double()
         Omegas = SO3.exp(hat_xs[:, :3])
         for k in range(self.min_N):
+            if Omegas.size(0) % 2 == 1:
+                Omegas = Omegas[:-1]
             Omegas = Omegas[::2].bmm(Omegas[1::2])
         predicted_rotations = Omegas
         true_rotations = Xs
         aoe_error = self.compute_aoe_roe(predicted_rotations, true_rotations)
         total_loss = self.lambda_aoe * aoe_error
         for k in range(self.min_N, self.max_N):
+            if Omegas.size(0) % 2 == 1:
+                Omegas = Omegas[:-1]
+            if Xs.size(0) % 2 == 1:
+                Xs = Xs[:-1]
             Omegas = Omegas[::2].bmm(Omegas[1::2])
             Xs = Xs[::2].bmm(Xs[1::2])
+            if masks.size(1) % 2 == 1:
+                masks = masks[:, :-1]
             masks = masks[:, ::2] * masks[:, 1::2]
+            min_length = min(Omegas.size(0), Xs.size(0))
+            Omegas = Omegas[:min_length]
+            Xs = Xs[:min_length]
             rs = SO3.log(bmtm(Omegas, Xs)).reshape(N, -1, 3)[:, self.N0:]
             rs = rs[masks[:, self.N0:].squeeze(2) == 1]
             total_loss += self.lambda_huber * (self.f_huber(rs[:, 2]) / (2 ** (k - self.min_N + 1)))
@@ -299,12 +337,15 @@ class LossImprovedAOE_ROE(BaseLoss):
 
     def forward_with_quaternion_mask(self, xs, hat_xs):
         """
-        Forward method for quaternions with an additional mask.
-        xs: ground truth increments with mask (last channel holds mask information)
-        hat_xs: network output
+        Forward method for quaternions with mask and integrated AOE/ROE.
+        xs: ground truth increments with mask (tensor of shape (N, T, 4)); if no mask is present, a dummy mask is used.
+        hat_xs: network output (tensor of shape (N, T, 3))
         """
         N = xs.shape[0]
-        masks = xs[:, :, 3].unsqueeze(1)
+        if xs.shape[2] < 4:
+            masks = torch.ones(xs.shape[0], xs.shape[1], 1, device=xs.device)
+        else:
+            masks = xs[:, :, 3].unsqueeze(1)
         masks = torch.nn.functional.conv1d(masks, self.weight, bias=None,
                                             stride=self.min_train_freq).double().transpose(1, 2)
         masks[masks < 1] = 0
@@ -312,18 +353,26 @@ class LossImprovedAOE_ROE(BaseLoss):
         hat_xs = self.dt * hat_xs.reshape(-1, 3).double()
         Omegas = SO3.qexp(hat_xs[:, :3])
         for k in range(self.min_N):
+            if Omegas.size(0) % 2 == 1:
+                Omegas = Omegas[:-1]
             Omegas = SO3.qmul(Omegas[::2], Omegas[1::2])
         predicted_rotations = Omegas
         true_rotations = Xs
         aoe_error = self.compute_aoe_roe(predicted_rotations, true_rotations)
         total_loss = self.lambda_aoe * aoe_error
         for k in range(self.min_N, self.max_N):
+            if Omegas.size(0) % 2 == 1:
+                Omegas = Omegas[:-1]
+            if Xs.size(0) % 2 == 1:
+                Xs = Xs[:-1]
             Omegas = SO3.qmul(Omegas[::2], Omegas[1::2])
             Xs = SO3.qmul(Xs[::2], Xs[1::2])
+            min_length = min(Omegas.size(0), Xs.size(0))
+            Omegas = Omegas[:min_length]
+            Xs = Xs[:min_length]
             masks = masks[:, ::2] * masks[:, 1::2]
             rs = SO3.qlog(SO3.qmul(SO3.qinv(Omegas), Xs))
             rs = rs.view(N, -1, 3)[:, self.N0:]
-            rs = rs[masks[:, self.N0:].squeeze(2) == 1]
-            total_loss += self.lambda_huber * (self.f_huber(rs) / (2 ** (k - self.min_N + 1)))
+            huber_term = self.f_huber(rs) / (2 ** (k - self.min_N + 1))
+            total_loss += self.lambda_huber * huber_term
         return total_loss
-

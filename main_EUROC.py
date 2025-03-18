@@ -66,7 +66,7 @@ train_params = {
         'weight_decay': 1e-1,
         'amsgrad': False,
     },
-    'loss_class': sl.LossImprovedAOE_ROE,
+    'loss_class': sl.GyroLoss,
     'loss': {
         'min_N': int(np.log2(dataset_params['min_train_freq'])),
         'max_N': int(np.log2(dataset_params['max_train_freq'])),
@@ -88,7 +88,7 @@ train_params = {
         'shuffle': False,
     },
     # frequency of validation step
-    'freq_val': 300,
+    'freq_val': 600,
     # total number of epochs
     'n_epochs': 1800,
     # where record results ?

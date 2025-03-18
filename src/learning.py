@@ -217,9 +217,6 @@ class LearningBasedProcessing:
         all_errors = []  # list to accumulate flattened error vectors for each sample
         aoe_list = []
         roe_list = []
-        aoe_total = 0.0
-        loss_val = 0.0
-        roe_total = 0.0
         self.net.eval()
         with torch.no_grad():
            for i in range(len(dataset)):
@@ -227,11 +224,14 @@ class LearningBasedProcessing:
                 # Add a batch dimension and move to GPU
                 us = us.cuda().unsqueeze(0)
                 xs = xs.cuda().unsqueeze(0)
+                if us.shape[1] == 0:
+                    print(f"Skipping sample {i} due to invalid input shape: {us.shape}")
+                    continue
+
                 hat_xs = self.net(us)
                 loss = criterion(xs, hat_xs) / len(dataset)
                 loss_epoch += loss.cpu()
-                # Compute error for this sample, then flatten
-                error_sample = xs - hat_xs  # shape: [1, T, d]
+                error_sample = xs[:, :, :3] - hat_xs  # Use only the first 3 channels of xs
                 all_errors.append(error_sample.squeeze(0).view(-1))
                 r_gt = xs[0]
                 r_est = hat_xs[0]
@@ -241,15 +241,15 @@ class LearningBasedProcessing:
                     R_est = r_est
                 aoe = compute_aoe(r_gt, R_est)
                 roe = compute_roe(r_gt, R_est)
-                aoe_list.append(aoe)
-                roe_list.append(roe)
+                # Force the metrics to CPU
+                aoe_list.append(aoe.cpu())
+                roe_list.append(roe.cpu())
+        # Stack on CPU to avoid device issues
         mean_aoe = torch.stack(aoe_list).mean()
         mean_roe = torch.stack(roe_list).mean()
 
         self.net.train()
-        # Concatenate all errors into one 1D tensor
         all_errors = torch.cat(all_errors, dim=0)
-        # Compute metrics over all elements
         mae = torch.mean(torch.abs(all_errors))
         rmse = torch.sqrt(torch.mean(all_errors ** 2))
         std_error = torch.std(all_errors)

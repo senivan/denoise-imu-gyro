@@ -91,10 +91,10 @@ train_params = {
         'eta_min': 1e-3,
     },
     'dataloader': {
-        'batch_size': 10,
+        'batch_size': 1,
         'pin_memory': False,
         'num_workers': 0,
-        'shuffle': False,
+        'shuffle': True,
     },
     # frequency of validation step
     'freq_val': 300,

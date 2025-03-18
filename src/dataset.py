@@ -456,18 +456,35 @@ class EUROCNewDataset(BaseDataset):
             diff_t = ts[:-mtf] - t_gt[tmp]
             masks[np.abs(diff_t) > 0.01] = 0
 
+            print(torch.cat((dxi_ij, masks.unsqueeze(1)), 1).float().shape[0])
+            print(imu.float().shape[0])
+
+            batch_size = min(torch.cat((dxi_ij, masks.unsqueeze(1)), 1).float().shape[0], imu.float().shape[0] - 16)
+            print(batch_size)
             # save all the sequence
             mondict = {
-                'xs': torch.cat((dxi_ij, masks.unsqueeze(1)), 1).float(),
-                'us': imu.float(),
+                'xs': torch.cat((dxi_ij, masks.unsqueeze(1)), 1).float()[:batch_size],
+                'us': imu.float()[:batch_size],
             }
             pdump(mondict, self.predata_dir, sequence + ".p")
-
+            print("XS:", mondict['xs'].shape)
+            print("US:", mondict['us'].shape)
+            for key in mondict.keys():
+                for i in range(mondict[key].shape[1]):
+                    print(key, i, mondict[key][:, i].shape) 
             # save ground truth
             mondict = {
-                'ts': ts,
-                'qs': q_gt.float(),
-                'vs': v_gt.float(),
-                'ps': p_gt.float(),
+                'ts': ts[:batch_size],
+                'qs': q_gt.float()[:batch_size],
+                'vs': v_gt.float()[:batch_size],
+                'ps': p_gt.float()[:batch_size],
             }
             pdump(mondict, self.predata_dir, sequence + "_gt.p")
+            print("TS:", mondict['ts'].shape)
+            print("QS:", mondict['qs'].shape)
+            print("VS:", mondict['vs'].shape)
+            print("PS:", mondict['ps'].shape)
+            for key in ['qs', 'vs', 'ps']:
+                for i in range(mondict[key].shape[1]):
+                    print(key, i, mondict[key][:, i].shape) 
+
