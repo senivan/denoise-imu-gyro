@@ -7,7 +7,7 @@ import src.dataset as ds
 import numpy as np
 
 base_dir = os.path.dirname(os.path.realpath(__file__))
-data_dir = './dateset/'
+data_dir = '/datasets1/EUROC_dataset'
 # test a given network
 # address = os.path.join(base_dir, 'results/EUROC/2020_02_18_16_52_55/')
 # or test the last trained network
@@ -29,27 +29,35 @@ net_params = {
 ################################################################################
 # Dataset parameters
 ################################################################################
-dataset_class = ds.EUROCDataset
+dataset_class = ds.EUROCNewDataset
 dataset_params = {
     # where are raw data ?
     'data_dir': data_dir,
     # where record preloaded data ?
-    'predata_dir': os.path.join(base_dir, 'data/EUROC'),
+    'predata_dir': os.path.join(base_dir, 'data/EUROC_correct'),
     # set train, val and test sequence
     'train_seqs': [
-        'dataset-room1_512_16',
-        'dataset-room3_512_16',
-        'dataset-room5_512_16'
+        'MH_01_easy',
+        'MH_03_medium',
+        'MH_05_difficult',
+        'V1_02_medium',
+        'V2_01_easy',
+        'V2_03_difficult'
         ],
     'val_seqs': [
-        'dataset-room2_512_16',
-        'dataset-room4_512_16',
-        'dataset-room6_512_16',
+        'MH_01_easy',
+        'MH_03_medium',
+        'MH_05_difficult',
+        'V1_02_medium',
+        'V2_01_easy',
+        'V2_03_difficult',
         ],
     'test_seqs': [
-        'dataset-room2_512_16',
-        'dataset-room4_512_16',
-        'dataset-room6_512_16'
+        'MH_02_easy',
+        'MH_04_difficult',
+        'V2_02_medium',
+        'V1_03_difficult',
+        'V1_01_easy',
         ],
     # size of trajectory during training
     'N': 32 * 500, # should be integer * 'max_train_freq'
@@ -66,7 +74,8 @@ train_params = {
         'weight_decay': 1e-1,
         'amsgrad': False,
     },
-    'loss_class': sl.GyroLoss,
+    'loss_class': sl.LossImprovedAOE_ROE,
+    # 'loss_class': sl.GyroLoss,
     'loss': {
         'min_N': int(np.log2(dataset_params['min_train_freq'])),
         'max_N': int(np.log2(dataset_params['max_train_freq'])),
@@ -82,19 +91,19 @@ train_params = {
         'eta_min': 1e-3,
     },
     'dataloader': {
-        'batch_size': 10,
+        'batch_size': 1,
         'pin_memory': False,
         'num_workers': 0,
-        'shuffle': False,
+        'shuffle': True,
     },
     # frequency of validation step
-    'freq_val': 600,
+    'freq_val': 300,
     # total number of epochs
     'n_epochs': 1800,
     # where record results ?
-    'res_dir': os.path.join(base_dir, "results/EUROC"),
+    'res_dir': os.path.join(base_dir, "results/EUROC_correct"),
     # where record Tensorboard log ?
-    'tb_dir': os.path.join(base_dir, "results/runs/EUROC"),
+    'tb_dir': os.path.join(base_dir, "results/runs/EUROC_correct"),
 }
 ################################################################################
 # Train on training data set
